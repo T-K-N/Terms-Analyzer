@@ -1,0 +1,19 @@
+{
+  "extensionName": "T&C विश्लेषक",
+  "loading": "लोड हो रहा है...",
+  "error": "त्रुटि",
+  "success": "सफल",
+  "cancel": "रद्द करें",
+  "continue": "जारी रखें",
+  "analyze": "विश्लेषण करें",
+  "close": "बंद करें",
+  "save": "सेव करें",
+  "language": "भाषा",
+  "settings": "सेटिंग्स",
+  "help": "सहायता",
+  "privacyPolicy": "गोपनीयता नीति",
+  "termsOfService": "सेवा की शर्तें",
+  "yes": "हां",
+  "no": "नहीं",
+  "ok": "ठीक है"
+}

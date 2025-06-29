@@ -1,0 +1,41 @@
+{
+  "title": "T&C Analyzer",
+  "subtitle": "Understand Terms & Conditions with AI",
+  "consentSection": {
+    "title": "Privacy Notice",
+    "description": "This extension will:",
+    "points": [
+      "Read Terms & Conditions from the current webpage",
+      "Send the text to AI for analysis",
+      "Show you a simple summary",
+      "Not store any data"
+    ],
+    "consentText": "I consent to AI analysis of Terms & Conditions",
+    "acceptButton": "Continue"
+  },
+  "detection": {
+    "searching": "Looking for Terms & Conditions...",
+    "found": "Terms & Conditions detected",
+    "notFound": "No Terms & Conditions found on this page",
+    "analyzeButton": "Analyze T&C"
+  },
+  "analysis": {
+    "processing": "Analyzing Terms & Conditions...",
+    "title": "AI Summary",
+    "riskLevels": {
+      "low": "Low Risk",
+      "medium": "Medium Risk",
+      "high": "High Risk"
+    }
+  },
+  "actions": {
+    "viewOriginal": "View Original T&C",
+    "exportSummary": "Export Summary"
+  },
+  "errors": {
+    "noConsent": "Please provide consent to continue",
+    "noTermsFound": "No Terms & Conditions found on this page",
+    "analysisError": "Failed to analyze terms. Please try again.",
+    "apiError": "AI service unavailable. Please try again later."
+  }
+}

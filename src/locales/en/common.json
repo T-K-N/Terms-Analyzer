@@ -1,0 +1,19 @@
+{
+  "extensionName": "T&C Analyzer",
+  "loading": "Loading...",
+  "error": "Error",
+  "success": "Success",
+  "cancel": "Cancel",
+  "continue": "Continue",
+  "analyze": "Analyze",
+  "close": "Close",
+  "save": "Save",
+  "language": "Language",
+  "settings": "Settings",
+  "help": "Help",
+  "privacyPolicy": "Privacy Policy",
+  "termsOfService": "Terms of Service",
+  "yes": "Yes",
+  "no": "No",
+  "ok": "OK"
+}
