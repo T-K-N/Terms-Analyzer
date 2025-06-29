@@ -37,7 +37,6 @@ const Popup: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check if user has previously given consent
     chrome.storage.sync.get(['hasConsent'], (result) => {
       if (result.hasConsent) {
         setHasConsent(true);
@@ -109,7 +108,6 @@ const Popup: React.FC = () => {
 
   return (
     <div className="w-96 min-h-96 bg-white">
-      {/* Header */}
       <header className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
@@ -126,10 +124,8 @@ const Popup: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="p-4 space-y-4">
         {!hasConsent ? (
-          // Consent Section
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">{t('popup:consentSection.title')}</h2>
             <p className="text-sm text-gray-600">{t('popup:consentSection.description')}</p>
@@ -152,7 +148,6 @@ const Popup: React.FC = () => {
           </div>
         ) : (
           <>
-            {/* Detection Status */}
             <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
               {termsData.found ? (
                 <>
@@ -177,7 +172,6 @@ const Popup: React.FC = () => {
               )}
             </div>
 
-            {/* Analyze Button */}
             {termsData.found && !analysisResult && (
               <button
                 onClick={handleAnalyze}
@@ -195,7 +189,6 @@ const Popup: React.FC = () => {
               </button>
             )}
 
-            {/* Analysis Results */}
             {analysisResult && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -253,7 +246,6 @@ const Popup: React.FC = () => {
               </div>
             )}
 
-            {/* Disclaimer */}
             <div className="mt-4 p-3 bg-yellow-50 border-l-4 border-yellow-400">
               <div className="flex items-start space-x-2">
                 <WarningIcon className="w-4 h-4 text-yellow-600 mt-0.5" />
@@ -269,7 +261,6 @@ const Popup: React.FC = () => {
         )}
       </main>
 
-      {/* Footer */}
       <footer className="border-t p-3 text-center text-xs text-gray-500">
         <div className="flex justify-center space-x-4">
           <a href="#" className="hover:text-blue-600">{t('common:privacyPolicy')}</a>
