@@ -1,4 +1,6 @@
 // Background service worker for Chrome extension
+import { GEMINI_API_KEY } from '../config/apiKey';
+
 interface AnalysisRequest {
   action: string;
   content: string;
@@ -14,24 +16,21 @@ interface AnalysisResult {
 }
 
 class AIProcessor {
-  private apiKey: string | null = null;
+  private apiKey: string;
 
   constructor() {
-    this.loadApiKey();
-  }
-
-  private async loadApiKey(): Promise<void> {
-    try {
-      const result = await chrome.storage.sync.get(['geminiApiKey']);
-      this.apiKey = result.geminiApiKey || null;
-    } catch (error) {
-      console.error('Failed to load API key:', error);
+    this.apiKey = GEMINI_API_KEY;
+    
+    if (!this.apiKey || this.apiKey.includes('ABC123')) {
+      console.error('❌ Please set your real Gemini API key in src/config/apiKey.ts');
+    } else {
+      console.log('✅ Gemini API key loaded successfully');
     }
   }
 
   async processTerms(termsText: string, language: string): Promise<AnalysisResult> {
     if (!this.apiKey) {
-      throw new Error('API key not configured. Please set your Gemini API key in settings.');
+      throw new Error('Extension is not properly configured. Please contact support.');
     }
 
     try {
@@ -51,7 +50,7 @@ class AIProcessor {
   private async callGeminiAPI(text: string, language: string): Promise<string> {
     const prompt = this.buildPrompt(text, language);
     
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent', {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -109,7 +108,7 @@ Format your response as JSON:
 Focus on: user obligations, company rights, data privacy, account termination, dispute resolution, liability.
 
 Terms to analyze:
-${termsText.substring(0, 8000)}
+${termsText.substring(0, 3000)}
 `;
   }
 
@@ -150,8 +149,10 @@ chrome.runtime.onMessage.addListener((request: AnalysisRequest, _sender, sendRes
 });
 
 async function handleAnalysisRequest(request: AnalysisRequest, sendResponse: (response: any) => void) {
+  console.log('🔄 Received analysis request:', request);
   try {
     if (!request.content || request.content.length < 100) {
+      console.log('❌ Content too short:', request.content?.length);
       sendResponse({
         success: false,
         error: 'Terms content is too short or empty'
@@ -159,14 +160,18 @@ async function handleAnalysisRequest(request: AnalysisRequest, sendResponse: (re
       return;
     }
 
+    console.log('✅ Content length:', request.content.length);
+    console.log('🔑 Checking API key...');
+    
     const result = await aiProcessor.processTerms(request.content, request.language);
+    console.log('✅ Analysis complete:', result);
     
     sendResponse({
       success: true,
       result: result
     });
   } catch (error) {
-    console.error('Analysis failed:', error);
+    console.error('❌ Analysis failed:', error);
     sendResponse({
       success: false,
       error: error instanceof Error ? error.message : 'Analysis failed'
