@@ -1,15 +1,18 @@
+/// <reference types="chrome"/>
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { 
+import {
   Warning as WarningIcon,
   CheckCircle as CheckCircleIcon,
   Description as DescriptionIcon,
   HourglassEmpty as LoadingIcon,
   Settings as SettingsIcon,
-  Error as ErrorIcon
+  Error as ErrorIcon,
+  WifiOff
 } from '@mui/icons-material';
 import { useLanguage } from '../contexts/LanguageContext';
 import LanguageSelector from './LanguageSelector';
+import { NetworkManager } from '../services/NetworkManager';
 
 interface TermsData {
   found: boolean;
@@ -29,45 +32,77 @@ interface AnalysisResult {
 const Popup: React.FC = () => {
   const { t } = useTranslation(['popup', 'common']);
   const { language } = useLanguage();
-  
+
   const [hasConsent, setHasConsent] = useState(false);
   const [termsData, setTermsData] = useState<TermsData>({ found: false });
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   useEffect(() => {
-    chrome.storage.sync.get(['hasConsent'], (result) => {
+    const networkManager = NetworkManager.getInstance();
+
+    const handleOnlineStatus = (status: boolean) => {
+      setIsOnline(status);
+      if (status && error?.includes('internet connection')) {
+        setError(null);
+      }
+    };
+
+    networkManager.addListener(handleOnlineStatus);
+
+    chrome.storage.sync.get(['hasConsent'], (result: { hasConsent?: boolean }) => {
       if (result.hasConsent) {
         setHasConsent(true);
         detectTermsAndConditions();
       }
     });
-  }, []);
+
+    return () => {
+      networkManager.removeListener(handleOnlineStatus);
+    };
+  }, [error]);
 
   const detectTermsAndConditions = async () => {
+    if (!isOnline) {
+      setError(t('popup:errors.offline'));
+      return;
+    }
+
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      if (!tab.id) {
+
+      if (!tab.id || !tab.url) {
         setError(t('popup:errors.noTermsFound'));
         return;
       }
 
-      const response = await chrome.tabs.sendMessage(tab.id, { 
+      const response = await chrome.tabs.sendMessage(tab.id, {
         action: 'detectTerms',
-        language: language 
+        language: language
       });
 
       if (response && response.found) {
         setTermsData(response);
         setError(null);
+
+        // Check for cached analysis
+        const cachedMessage = await chrome.runtime.sendMessage({
+          action: 'getCachedAnalysis',
+          url: tab.url,
+          language: language
+        });
+
+        if (cachedMessage && cachedMessage.success) {
+          setAnalysisResult(cachedMessage.result);
+        }
       } else {
         setError(t('popup:errors.noTermsFound'));
       }
     } catch (err) {
       console.error('Error detecting terms:', err);
-      setError(t('popup:errors.noTermsFound'));
+      setError(isOnline ? t('popup:errors.noTermsFound') : t('popup:errors.offline'));
     }
   };
 
@@ -78,7 +113,7 @@ const Popup: React.FC = () => {
   };
 
   const handleAnalyze = async () => {
-    if (!termsData.content) {
+    if (!termsData?.content) {
       setError(t('popup:errors.noTermsFound'));
       return;
     }
@@ -87,20 +122,26 @@ const Popup: React.FC = () => {
     setError(null);
 
     try {
+      // Get the active tab
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) throw new Error('No active tab found');
+
+      // Send directly to background script for analysis using existing terms data
       const response = await chrome.runtime.sendMessage({
         action: 'analyzeTerms',
         content: termsData.content,
-        language: language
+        language: language,
+        url: tab.url
       });
 
-      if (response.success) {
-        setAnalysisResult(response.result);
-      } else {
-        setError(response.error || t('popup:errors.analysisError'));
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to analyze terms');
       }
-    } catch (err) {
-      console.error('Analysis error:', err);
-      setError(t('popup:errors.analysisError'));
+
+      setAnalysisResult(response.data);
+    } catch (error) {
+      console.error('Analysis error:', error);
+      setError(error instanceof Error ? error.message : 'Failed to analyze terms');
     } finally {
       setIsAnalyzing(false);
     }
@@ -129,7 +170,7 @@ const Popup: React.FC = () => {
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">{t('popup:consentSection.title')}</h2>
             <p className="text-sm text-gray-600">{t('popup:consentSection.description')}</p>
-            
+
             <ul className="text-sm space-y-2">
               {(t('popup:consentSection.points', { returnObjects: true }) as string[]).map((point, index) => (
                 <li key={index} className="flex items-start space-x-2">
@@ -193,11 +234,10 @@ const Popup: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-bold">{t('popup:analysis.title')}</h3>
-                  <span className={`px-2 py-1 rounded text-sm font-medium ${
-                    analysisResult.riskLevel === 'low' ? 'bg-green-100 text-green-800' :
+                  <span className={`px-2 py-1 rounded text-sm font-medium ${analysisResult.riskLevel === 'low' ? 'bg-green-100 text-green-800' :
                     analysisResult.riskLevel === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-red-100 text-red-800'
-                  }`}>
+                      'bg-red-100 text-red-800'
+                    }`}>
                     {t(`popup:analysis.riskLevels.${analysisResult.riskLevel}`)}
                   </span>
                 </div>
@@ -268,6 +308,21 @@ const Popup: React.FC = () => {
           <a href="#" className="hover:text-blue-600">{t('common:termsOfService')}</a>
         </div>
       </footer>
+
+      {!isOnline && (
+        <div className="fixed bottom-0 left-0 right-0 p-4 bg-red-100 border-t border-red-300 text-red-700 flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <WifiOff className="w-5 h-5" />
+            <span className="text-sm">{t('popup:offline.message')}</span>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="text-sm font-semibold underline"
+          >
+            {t('popup:offline.reloadButton')}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

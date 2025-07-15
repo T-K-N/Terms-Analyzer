@@ -1,11 +1,10 @@
-// Background service worker for Chrome extension
+/// <reference types="chrome"/>
 import { GEMINI_API_KEY } from '../config/apiKey';
+import { storageService } from '../services/StorageService';
+import { NetworkManager } from '../services/NetworkManager';
+import axios, { AxiosError } from 'axios';
+import axiosRetry from 'axios-retry';
 
-interface AnalysisRequest {
-  action: string;
-  content: string;
-  language: string;
-}
 
 interface AnalysisResult {
   summary: string;
@@ -17,10 +16,23 @@ interface AnalysisResult {
 
 class AIProcessor {
   private apiKey: string;
+  private networkManager: NetworkManager;
+  private retryCount: number = 3;
 
   constructor() {
     this.apiKey = GEMINI_API_KEY;
-    
+    this.networkManager = NetworkManager.getInstance();
+
+    // Configure axios retry
+    axiosRetry(axios, {
+      retries: this.retryCount,
+      retryDelay: axiosRetry.exponentialDelay,
+      retryCondition: (error: AxiosError) => {
+        return axiosRetry.isNetworkOrIdempotentRequestError(error) ||
+          error.response?.status === 429;
+      }
+    });
+
     if (!this.apiKey || this.apiKey.includes('ABC123')) {
       console.error('❌ Please set your real Gemini API key in src/config/apiKey.ts');
     } else {
@@ -28,61 +40,127 @@ class AIProcessor {
     }
   }
 
-  async processTerms(termsText: string, language: string): Promise<AnalysisResult> {
+  async processTerms(termsText: string, language: string, url?: string): Promise<AnalysisResult> {
     if (!this.apiKey) {
       throw new Error('Extension is not properly configured. Please contact support.');
+    }
+
+    // Check for cached result first
+    if (url) {
+      const cachedResult = await storageService.getCachedAnalysis(url, language);
+      if (cachedResult && cachedResult.content === termsText) {
+        return cachedResult.result;
+      }
+    }
+
+    // Check network connectivity
+    if (!this.networkManager.isNetworkAvailable()) {
+      throw new Error('No internet connection. Please try again when online.');
     }
 
     try {
       const summary = await this.callGeminiAPI(termsText, language);
       const result = this.parseAIResponse(summary);
-      
-      return {
+      const finalResult = {
         ...result,
         timestamp: Date.now()
       };
+
+      // Cache the result if URL is provided
+      if (url) {
+        await storageService.cacheAnalysis(url, termsText, finalResult, language);
+      }
+
+      return finalResult;
     } catch (error) {
+      if (!this.networkManager.isNetworkAvailable()) {
+        throw new Error('Lost internet connection. Please try again when online.');
+      }
+
+      if (axios.isAxiosError(error)) {
+        if (error.response?.status === 429) {
+          throw new Error('Rate limit exceeded. Please try again in a few minutes.');
+        }
+        if (error.response?.status === 403) {
+          throw new Error('API key invalid or expired. Please check your configuration.');
+        }
+      }
+
       console.error('AI processing failed:', error);
-      throw error;
+      throw new Error('Analysis failed. Please try again later.');
     }
   }
 
   private async callGeminiAPI(text: string, language: string): Promise<string> {
     const prompt = this.buildPrompt(text, language);
-    
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': this.apiKey!
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }],
-        safetySettings: [
-          {
-            category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-            threshold: "BLOCK_MEDIUM_AND_ABOVE"
+
+    // Truncate text if too long (Gemini has a token limit)
+    const truncatedPrompt = prompt.length > 30000 ? prompt.substring(0, 30000) + '...' : prompt;
+
+    try {
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': this.apiKey
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: truncatedPrompt
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.3,
+            topP: 0.8,
+            topK: 40,
+            maxOutputTokens: 2048
           }
-        ],
-        generationConfig: {
-          temperature: 0.3,
-          topP: 0.8,
-          topK: 40,
-          maxOutputTokens: 2048
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Gemini API error response:', errorData);
+        throw new Error(`Gemini API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+      }
+
+      const data = await response.json();
+      console.log('Gemini API raw response:', JSON.stringify(data, null, 2));
+
+      if (!data.candidates || !Array.isArray(data.candidates) || data.candidates.length === 0) {
+        console.error('No candidates in response:', data);
+        throw new Error('No response generated by the API');
+      }
+
+      const candidate = data.candidates[0];
+      if (!candidate.content || !candidate.content.parts || !Array.isArray(candidate.content.parts)) {
+        console.error('Invalid candidate format:', candidate);
+        throw new Error('Invalid response format from API');
+      }
+
+      const text = candidate.content.parts[0]?.text;
+      if (!text) {
+        console.error('No text in response parts:', candidate.content.parts);
+        throw new Error('No text content in API response');
+      }
+
+      // Try to parse the response as JSON to verify format
+      try {
+        const parsed = JSON.parse(text);
+        if (!parsed.summary || !parsed.riskLevel || !Array.isArray(parsed.keyPoints) || !Array.isArray(parsed.redFlags)) {
+          throw new Error('Response missing required fields');
         }
-      })
-    });
+        return text;
+      } catch (parseError) {
+        console.error('Failed to parse API response as JSON:', text);
+        throw new Error('API response is not in valid JSON format');
+      }
 
-    if (!response.ok) {
-      throw new Error(`Gemini API Error: ${response.status}`);
+    } catch (error) {
+      console.error('Error in callGeminiAPI:', error);
+      throw error;
     }
-
-    const data = await response.json();
-    return data.candidates[0].content.parts[0].text;
   }
 
   private buildPrompt(termsText: string, language: string): string {
@@ -93,94 +171,72 @@ class AIProcessor {
     };
 
     return `
-Analyze the following Terms and Conditions and provide a structured summary in JSON format.
-
+You are a legal document analyzer. I need you to analyze some Terms and Conditions and provide a response in valid JSON format.
 ${languageInstructions[language as keyof typeof languageInstructions] || languageInstructions.en}
 
-Format your response as JSON:
+YOUR RESPONSE MUST BE VALID JSON WITH THIS EXACT STRUCTURE:
 {
-  "summary": "Clear summary in simple language",
+  "summary": "2-3 sentence summary in simple language",
   "riskLevel": "low|medium|high",
   "keyPoints": ["Point 1", "Point 2", "Point 3"],
   "redFlags": ["Red flag 1", "Red flag 2"]
 }
 
-Focus on: user obligations, company rights, data privacy, account termination, dispute resolution, liability.
+DO NOT include any text before or after the JSON.
+DO NOT include markdown formatting.
+DO NOT include \`\`\` or any other decorators.
+ENSURE the response is parseable JSON.
 
-Terms to analyze:
-${termsText.substring(0, 3000)}
-`;
+Here are the terms to analyze:
+${termsText.substring(0, 25000)}`;
   }
 
-  private parseAIResponse(aiResponse: string): Omit<AnalysisResult, 'timestamp'> {
+  private parseAIResponse(response: string): Omit<AnalysisResult, 'timestamp'> {
     try {
-      const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return {
-          summary: parsed.summary || 'Analysis completed',
-          riskLevel: ['low', 'medium', 'high'].includes(parsed.riskLevel) ? parsed.riskLevel : 'medium',
-          keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints.slice(0, 8) : ['Analysis completed'],
-          redFlags: Array.isArray(parsed.redFlags) ? parsed.redFlags.slice(0, 5) : []
-        };
-      }
+      const parsed = JSON.parse(response);
+      return {
+        summary: parsed.summary || '',
+        riskLevel: parsed.riskLevel || 'medium',
+        keyPoints: parsed.keyPoints || [],
+        redFlags: parsed.redFlags || []
+      };
     } catch (error) {
       console.error('Failed to parse AI response:', error);
+      throw new Error('Failed to parse analysis results.');
     }
-
-    return {
-      summary: aiResponse.substring(0, 1000),
-      riskLevel: 'medium',
-      keyPoints: ['Analysis completed - see summary for details'],
-      redFlags: []
-    };
   }
 }
 
+// Initialize AIProcessor instance
 const aiProcessor = new AIProcessor();
 
-// Message handler
-chrome.runtime.onMessage.addListener((request: AnalysisRequest, _sender, sendResponse) => {
+// Set up message listener
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  console.log('Received message in background script:', request);
+
   if (request.action === 'analyzeTerms') {
-    handleAnalysisRequest(request, sendResponse);
-    return true;
+    (async () => {
+      try {
+        const result = await aiProcessor.processTerms(
+          request.content,
+          request.language,
+          request.url
+        );
+        sendResponse({ success: true, data: result });
+      } catch (error) {
+        console.error('Error processing terms:', error);
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error occurred'
+        });
+      }
+    })();
+    return true; // Keep the message channel open for async response
   }
-  return false;
 });
 
-async function handleAnalysisRequest(request: AnalysisRequest, sendResponse: (response: any) => void) {
-  console.log('🔄 Received analysis request:', request);
-  try {
-    if (!request.content || request.content.length < 100) {
-      console.log('❌ Content too short:', request.content?.length);
-      sendResponse({
-        success: false,
-        error: 'Terms content is too short or empty'
-      });
-      return;
-    }
-
-    console.log('✅ Content length:', request.content.length);
-    console.log('🔑 Checking API key...');
-    
-    const result = await aiProcessor.processTerms(request.content, request.language);
-    console.log('✅ Analysis complete:', result);
-    
-    sendResponse({
-      success: true,
-      result: result
-    });
-  } catch (error) {
-    console.error('❌ Analysis failed:', error);
-    sendResponse({
-      success: false,
-      error: error instanceof Error ? error.message : 'Analysis failed'
-    });
-  }
-}
-
-// Installation handler
-chrome.runtime.onInstalled.addListener((details) => {
+// Installation handling
+chrome.runtime.onInstalled.addListener((details: chrome.runtime.InstalledDetails) => {
   if (details.reason === 'install') {
     chrome.storage.sync.set({
       hasConsent: false,

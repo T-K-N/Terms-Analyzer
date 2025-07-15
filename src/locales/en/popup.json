@@ -36,6 +36,12 @@
     "noConsent": "Please provide consent to continue",
     "noTermsFound": "No Terms & Conditions found on this page",
     "analysisError": "Failed to analyze terms. Please try again.",
-    "apiError": "AI service unavailable. Please try again later."
+    "apiError": "AI service unavailable. Please try again later.",
+    "offline": "You're offline. Connect to the internet to analyze Terms & Conditions."
+  },
+  "offline": {
+    "message": "You're offline. Some features may not be available.",
+    "cached": "Showing cached analysis",
+    "retry": "Retry Analysis"
   }
 }
